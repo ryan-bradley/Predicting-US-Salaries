@@ -1,0 +1,399 @@
+---
+title: "Predicting US Salaries - Ryan Bradley"
+output: html_notebook
+---
+
+First, the necessary packages/libraries and data need to be loaded to perform the analyses. The data for this analysis has been obtained from the [UCI Machine Learning Repositoriy](https://archive.ics.uci.edu/ml/datasets/Adult).
+
+
+```{r setup}
+library(tidyverse)
+library(modelr)
+
+
+data  <- read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data", 
+                  col_types = cols(), col_names = FALSE)
+names <- c("Age", "Work_Class", "fnlwgt", "Education", "Education_Years", "Marial Status", "Occupation", "Relationship", "Race", "Sex", "Capital Gain", "Capital Loss", "Hours_Per_Week", "Native Country", "Salary")
+
+colnames(data) <- names
+data <- data %>%
+  mutate(Salary = ifelse(Salary == "<=50K", 0, 1))
+
+average_age <- mean(data$Age)
+average_education_years <- mean(data$Education_Years)
+
+# Function to convert the coefficient estimates into odds and probabilities for
+# the coefficient indices provided in the odds and probs parameters
+odds_and_probs <- function(logistic_model, odds = c(1), probs=c(1)) {
+  data <- summary(logistic_model, digits = 3)$coefficients %>% 
+    as.data.frame() %>% 
+    rename(`p-value` = `Pr(>|z|)`) %>%
+    mutate(`Odds(ratio)` = exp(coefficients(logistic_model)),
+           Probability = plogis(coefficients(logistic_model)),
+           Significance = as.factor(symnum(`p-value`, na = FALSE, 
+                     cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+                     symbols = c("***", "**", "*", ".", " "))),
+           Probability = ifelse(row_number() %in% probs, Probability, NA),
+           `Odds(ratio)` = ifelse(row_number() %in% odds, `Odds(ratio)`, NA)
+    ) %>%
+    select(1, 5, 6, 2, 4, 7, 3) 
+  
+  
+  
+  row.names(data) <- row.names(summary(logistic_model)$coefficients)
+  
+  data
+}
+
+# Calculates the predicted value for each of the grade levels for a given model
+# Converts these predicted values to their corresponding Odds and Probability values
+predicted_probabilities <- function(logistic_model, data, variable_value = 0, variable_name = "Age", pivot_variable = "Sex") {
+  if (pivot_variable == "Sex") {
+    temp <-data_grid(data, Sex) %>% 
+      mutate(Variable = variable_value)
+  } else if (pivot_variable == "Work_Class") {
+    temp <-data_grid(data, Work_Class) %>% 
+      mutate(Variable = variable_value)
+  }
+  
+  variable_index <- length(colnames(temp))
+  colnames(temp) <- c(colnames(temp)[1:variable_index-1], variable_name)
+  
+  temp <- temp %>% 
+    add_predictions(logistic_model) %>% 
+    mutate(Odds = exp(pred), 
+           Probability = plogis(pred)) %>% 
+    rename(`Predicted Value` = pred)
+  
+  temp %>% select(-variable_index)
+}
+
+# Caclulates the pseudo R2 values for the given logistic regression model
+pseudo_r2 <- function(logistic_model) {
+  
+  mcfadden <- function(m) { m.null <- update(m, . ~ 1); LLf <- logLik(m); LL0 <- logLik(m.null); as.vector(1-(LLf/LL0))}
+  coxsnell <- function(m) { m.null <- update(m, . ~ 1); LLf <- logLik(m); LL0 <- logLik(m.null); N <- length(resid(m)); as.vector(1 - exp((2/N) * (LL0 - LLf)))}
+  nagelkerke <- function(m) { m.null <- update(m, . ~ 1); LLf <- logLik(m); LL0 <- logLik(m.null); N <- length(resid(m)); as.vector((1 - exp((2/N) * (LL0 - LLf))) / (1 - exp(LL0)^(2/N)))}
+  
+  list(McFadden=mcfadden(logistic_model), CoxSnell=coxsnell(logistic_model), Nagelkerke=nagelkerke(logistic_model))
+}
+
+predicted_data <- function(logistic_model, data) {
+  data %>% 
+    add_predictions(logistic_model) %>% 
+    mutate(prob=plogis(pred),
+           Guess = ifelse(prob >= 0.50, 1, 0))
+}
+
+predictive_percentage <- function(predicted_data) {
+  predicted_data %>% 
+    summarize(Accuracy = mean(Guess == Salary, na.rm=T)*100) %>%
+    mutate(Baseline.Difference = Accuracy - baseline_accuracy)
+}
+
+confusion_matrix <- function(predicted_data) {
+  with(predicted_data, table(Salary, Guess))
+}
+```
+***
+The overall research question that we are trying to answer here is “What factors lead to higher paying salaries?”
+
+To study this question, we will carefully examine a number of different predictors and examine their influence on our dependent variable `*Salary*`.
+
+Lets look at a simple descriptive statistics for our data, the percentage of individuals in the sample with Salaries above USD $50,000
+```{r}
+data %>% summarise(Percentage = mean(Salary)*100)
+```
+
+An initial baseline model has been generated for pseudo R^2^ comparisons. If we simply guess that every individual will have a salary below $50,000, then our baseline accuracy is 75.92%.
+
+```{r}
+temp_data <- data %>% mutate(Guess = 0) 
+(baseline_accuracy <- predictive_percentage(temp_data))
+
+baseline_accuracy <- baseline_accuracy$Accuracy
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+
+
+
+***
+##### 1. Does an individuals age lead to a higher salary?
+
+```{r}
+age_model <- glm(Salary ~ Age, data=data, family=binomial(logit))
+odds_and_probs(age_model, odds = c(1, 2))
+```
+
+```{r}
+pseudo_r2(age_model)
+```
+
+```{r}
+temp_data <- predicted_data(age_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+
+```{r}
+fake_data <- data_grid(data, Age=seq_range(Age, 25)) %>% add_predictions(age_model) %>% mutate(prob = plogis(pred))
+ggplot(data) + geom_point(aes(Age, Salary), alpha = 0.012) + geom_line(aes(Age, prob), data=fake_data, color="red") + labs(x="Age (Years)", y="Probability of Salary >50K")
+```
+
+***
+##### 2. Does an individuals Gender affect their salary?
+
+```{r}
+gender_model <- glm(Salary ~ Sex, data=data, family=binomial(logit))
+odds_and_probs(gender_model)
+```
+
+```{r}
+predicted_probabilities(gender_model, data, variable_value = average_age)
+```
+
+```{r}
+pseudo_r2(gender_model)
+```
+
+```{r}
+fake_data <- data_grid(data, Sex) %>% add_predictions(gender_model) %>% mutate(prob = plogis(pred))
+ggplot(fake_data) + geom_bar(aes(Sex, prob, fill=Sex), stat="identity", show.legend=FALSE) + ylim(0,1) + labs(x="Gender", y="Probability of Salary >50K")
+```
+
+
+***
+##### 3. Controling for an individuals Gender, does an individuals age still influence their salary?
+
+```{r}
+both_model <- glm(Salary ~ Sex + Age, data=data, family=binomial(logit))
+odds_and_probs(both_model, odds = c(1, 3))
+```
+
+```{r}
+predicted_probabilities(both_model, data, variable_value = average_age)
+```
+
+```{r}
+pseudo_r2(both_model)
+```
+
+```{r}
+temp_data <- predicted_data(both_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Sex, Age=seq_range(Age, 25)) %>% add_predictions(both_model) %>% mutate(prob=plogis(pred))
+ggplot(data) + geom_point(aes(Age, Salary, color=Sex), alpha = 0.1) + geom_line(aes(Age, prob, color=Sex), data=fake_data) + labs(x="Age (Years)", y="Probability of Salary >50K") + geom_vline(xintercept = average_age, color="blue", alpha = 0.5, linetype="dotted")
+```
+
+
+
+***
+##### 4. Does an individuals level of Education affect their salary?
+
+```{r}
+education_model <- glm(Salary ~ Education_Years, data=data, family=binomial(logit))
+odds_and_probs(education_model, odds = c(1, 2))
+```
+
+
+```{r}
+pseudo_r2(education_model)
+```
+
+
+```{r}
+temp_data <- predicted_data(education_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Education_Years=seq_range(Education_Years, 10)) %>% add_predictions(education_model) %>% mutate(prob = plogis(pred))
+ggplot(data) + geom_point(aes(Education_Years, Salary), alpha = 0.012) + geom_line(aes(Education_Years, prob), data=fake_data, color="red") + labs(x="Years of Education", y="Probability of Salary >50K")
+```
+
+***
+##### 5. Controling for an individuals Gender, does an individuals Education level still influence their salary?
+
+```{r}
+education_gender_model <- glm(Salary ~ Sex + Education_Years, data=data, family=binomial(logit))
+odds_and_probs(education_gender_model, odds = c(1, 3))
+```
+
+```{r}
+predicted_probabilities(education_gender_model, data, variable_name = "Education_Years", variable_value = average_education_years)
+```
+
+```{r}
+pseudo_r2(education_gender_model)
+```
+
+```{r}
+temp_data <- predicted_data(education_gender_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Sex, Education_Years=seq_range(Education_Years, 12)) %>% add_predictions(education_gender_model) %>% mutate(prob=plogis(pred))
+ggplot(data) + geom_point(aes(Education_Years, Salary, color=Sex), alpha = 0.1) + geom_line(aes(Education_Years, prob, color=Sex), data=fake_data) + labs(x="Years of Education", y="Probability of Salary >50K") + geom_vline(xintercept = average_education_years, color="blue", alpha = 0.5, linetype="dotted")
+```
+
+
+***
+##### 6. Is there an interaction between Gender and Years of Education on the influence on an individuals Salary?
+
+
+```{r}
+interaction_model <- glm(Salary ~ Sex * Education_Years, data=data, family=binomial(logit))
+odds_and_probs(interaction_model, odds = c(1, 3, 4))
+```
+
+```{r}
+predicted_probabilities(interaction_model, data, variable_name = "Education_Years", variable_value = average_education_years)
+```
+
+```{r}
+pseudo_r2(interaction_model)
+```
+
+```{r}
+temp_data <- predicted_data(interaction_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Sex, Education_Years=seq_range(Education_Years, 12)) %>% add_predictions(interaction_model) %>% mutate(prob=plogis(pred))
+ggplot(data) + geom_point(aes(Education_Years, Salary, color=Sex), alpha = 0.012) + geom_line(aes(Education_Years, prob, color=Sex), data=fake_data) + labs(x="Years of Education", y="Probability of Salary >50K") + geom_vline(xintercept = average_education_years, color="blue", alpha = 0.5, linetype="dotted")
+```
+
+***
+##### 7. Does the Working Class of an individual affect their salary?
+
+```{r}
+class_model <- glm(Salary ~ Work_Class, data=data, family=binomial(logit))
+odds_and_probs(class_model)
+```
+
+```{r}
+predicted_probabilities(class_model, data, pivot_variable = "Work_Class")
+```
+
+```{r}
+pseudo_r2(class_model)
+```
+
+```{r}
+fake_data <- data_grid(data, Work_Class) %>% add_predictions(class_model) %>% mutate(prob = plogis(pred))
+ggplot(fake_data) + geom_bar(aes(Work_Class, prob, fill=Work_Class), stat="identity", show.legend=FALSE) + ylim(0,1) + labs(x="Working Class", y="Probability of Salary >50K")  + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+***
+##### 8. Does the Working Class of an individual affect their salary?
+
+```{r}
+hour_model <- glm(Salary ~ Hours_Per_Week, data=data, family=binomial(logit))
+odds_and_probs(hour_model, odds = c(1, 2))
+```
+
+```{r}
+pseudo_r2(hour_model)
+```
+
+```{r}
+temp_data <- predicted_data(hour_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+
+```{r}
+fake_data <- data_grid(data, Hours_Per_Week=seq_range(Hours_Per_Week, 20)) %>% add_predictions(hour_model) %>% mutate(prob = plogis(pred))
+ggplot(data) + geom_point(aes(Hours_Per_Week, Salary), alpha = 0.012) + geom_line(aes(Hours_Per_Week, prob), data=fake_data, color="red") + labs(x="Work Commitment (Hours per Week)", y="Probability of Salary >50K") + geom_vline(xintercept = mean(data$Hours_Per_Week), color = "blue", alpha = 0.5, linetype="dotted")
+```
+
+***
+### 9. Effect of hours Per Week and Years of Education
+
+```{r}
+multiple_cont_model <- glm(Salary ~ Hours_Per_Week + Education_Years, data=data, family=binomial(logit))
+odds_and_probs(multiple_cont_model, odds = c(1, 2, 3))
+```
+
+```{r}
+pseudo_r2(multiple_cont_model)
+```
+
+```{r}
+temp_data <- predicted_data(multiple_cont_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Hours_Per_Week=seq_range(Hours_Per_Week, 20), Education_Years=seq_range(Education_Years, 5)) %>%
+  mutate(Education_Years=round(Education_Years)) %>% add_predictions(multiple_cont_model) %>% mutate(prob=plogis(pred), Education_Years = factor(Education_Years)) %>% rename(`Education (Years)` = Education_Years)
+ggplot(data %>% rename(`Education (Years)` = Education_Years)) + geom_point(aes(Hours_Per_Week, Salary), alpha = 0.12) + geom_line(aes(Hours_Per_Week, prob, color=`Education (Years)`), data=fake_data) + labs(x="Work Commitment (Hours/Week)", y="Probability of Salary >50K")
+```
+
+***
+### 10. Effect of hours Per Week interacting with Years of Education
+
+```{r}
+multiple_cont_interaction_model <- glm(Salary ~ Hours_Per_Week * Education_Years, data=data, family=binomial(logit))
+odds_and_probs(multiple_cont_interaction_model, odds = c(1, 2, 3, 4))
+```
+
+```{r}
+pseudo_r2(multiple_cont_interaction_model)
+```
+
+```{r}
+temp_data <- predicted_data(multiple_cont_interaction_model, data)
+predictive_percentage(temp_data)
+```
+
+```{r}
+confusion_matrix(temp_data)
+```
+
+```{r}
+fake_data <- data_grid(data, Hours_Per_Week=seq_range(Hours_Per_Week, 20), Education_Years=seq_range(Education_Years, 5)) %>%
+  mutate(Education_Years=round(Education_Years)) %>% add_predictions(multiple_cont_interaction_model) %>% mutate(prob=plogis(pred), Education_Years = factor(Education_Years)) %>% rename(`Education (Years)` = Education_Years)
+ggplot(data %>% rename(`Education (Years)` = Education_Years)) + geom_point(aes(Hours_Per_Week, Salary), alpha = 0.12) + geom_line(aes(Hours_Per_Week, prob, color=`Education (Years)`), data=fake_data) + labs(x="Work Commitment (Hours/Week)", y="Probability of Salary >50K")
+```
+
