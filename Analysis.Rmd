@@ -189,7 +189,7 @@ fake_data_64 <- data_grid(data, Age_Bin = "55 – 64", Age=seq(55, 64)) %>% add_
 fake_data_plus <- data_grid(data, Age_Bin = "65+", Age=seq(65, max(data$Age))) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
 
 
-ggplot(data) + geom_point(aes(Age, Salary, color=Age_Bin), alpha = 0.012, show.legend = F) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_24) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_34) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_44) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_54) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_64) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_plus) + labs(x="Age (Years)", y="Probability of Salary >50K")
+ggplot(data) + geom_point(aes(Age, Salary, color=Age_Bin), alpha = 0.012, show.legend = F) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_24) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_34) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_44) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_54) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_64) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_plus) + labs(x="Age Range (Years)", y="Probability of Salary >50K", colour="Age Range")
 ```
 
 
