@@ -17,7 +17,14 @@ names <- c("Age", "Work_Class", "fnlwgt", "Education", "Education_Years", "Maria
 
 colnames(data) <- names
 data <- data %>%
-  mutate(Salary = ifelse(Salary == "<=50K", 0, 1))
+  mutate(Salary = ifelse(Salary == "<=50K", 0, 1),
+         Fulltime = ifelse(Hours_Per_Week >= 40, "Yes", "No"),
+         Age_Bin = ifelse(Age < 25, "18 – 24", 
+                          ifelse(Age < 35, "25 – 34", 
+                                 ifelse(Age < 45, "35 – 44",
+                                        ifelse(Age < 55, "45 – 54",
+                                               ifelse(Age < 65, "55 – 64", "65+")))))
+         )
 
 average_age <- mean(data$Age)
 average_education_years <- mean(data$Education_Years)
@@ -54,6 +61,9 @@ predicted_probabilities <- function(logistic_model, data, variable_value = 0, va
   } else if (pivot_variable == "Work_Class") {
     temp <-data_grid(data, Work_Class) %>% 
       mutate(Variable = variable_value)
+  } else if (pivot_variable == "Fulltime") {
+    temp <-data_grid(data, Fulltime) %>% 
+      mutate(Variable = variable_value)
   }
   
   variable_index <- length(colnames(temp))
@@ -86,9 +96,15 @@ predicted_data <- function(logistic_model, data) {
 }
 
 predictive_percentage <- function(predicted_data) {
-  predicted_data %>% 
-    summarize(Accuracy = mean(Guess == Salary, na.rm=T)*100) %>%
-    mutate(Baseline.Difference = Accuracy - baseline_accuracy)
+  if (exists("baseline_accuracy")) {
+    predicted_data %>% 
+      summarize(Accuracy = mean(Guess == Salary, na.rm=T)*100) %>%
+      mutate(Baseline.Difference = Accuracy - baseline_accuracy)
+  } else {
+    predicted_data %>% 
+      summarize(Accuracy = mean(Guess == Salary, na.rm=T)*100) %>%
+      mutate(Baseline.Difference = NA)
+  }
 }
 
 confusion_matrix <- function(predicted_data) {
@@ -148,6 +164,35 @@ fake_data <- data_grid(data, Age=seq_range(Age, 25)) %>% add_predictions(age_mod
 ggplot(data) + geom_point(aes(Age, Salary), alpha = 0.012) + geom_line(aes(Age, prob), data=fake_data, color="red") + labs(x="Age (Years)", y="Probability of Salary >50K")
 ```
 
+
+***
+##### 1.5. Does an individuals age lead to a higher salary?
+
+```{r}
+age_bin_model <- glm(Salary ~ Age_Bin * Age, data=data, family=binomial(logit))
+odds_and_probs(age_bin_model)
+```
+
+
+```{r}
+pseudo_r2(age_bin_model)
+```
+
+
+```{r}
+
+fake_data_24 <- data_grid(data, Age_Bin = "18 – 24", Age=seq(min(data$Age), 24)) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+fake_data_34 <- data_grid(data, Age_Bin = "25 – 34", Age=seq(25, 34)) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+fake_data_44 <- data_grid(data, Age_Bin = "35 – 44", Age=seq(35, 44)) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+fake_data_54 <- data_grid(data, Age_Bin = "45 – 54", Age=seq(45, 54)) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+fake_data_64 <- data_grid(data, Age_Bin = "55 – 64", Age=seq(55, 64)) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+fake_data_plus <- data_grid(data, Age_Bin = "65+", Age=seq(65, max(data$Age))) %>% add_predictions(age_bin_model) %>% mutate(prob = plogis(pred))
+
+
+ggplot(data) + geom_point(aes(Age, Salary, color=Age_Bin), alpha = 0.012, show.legend = F) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_24) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_34) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_44) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_54) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_64) + geom_line(aes(Age, prob, color=Age_Bin), data=fake_data_plus) + labs(x="Age (Years)", y="Probability of Salary >50K")
+```
+
+
 ***
 ##### 2. Does an individuals Gender affect their salary?
 
@@ -174,30 +219,30 @@ ggplot(fake_data) + geom_bar(aes(Sex, prob, fill=Sex), stat="identity", show.leg
 ##### 3. Controling for an individuals Gender, does an individuals age still influence their salary?
 
 ```{r}
-both_model <- glm(Salary ~ Sex + Age, data=data, family=binomial(logit))
-odds_and_probs(both_model, odds = c(1, 3))
+both_model <- glm(Salary ~ Sex + Age_Bin, data=data, family=binomial(logit))
+odds_and_probs(both_model)
 ```
 
 ```{r}
-predicted_probabilities(both_model, data, variable_value = average_age)
+data_grid(data, Sex, Age_Bin) %>% 
+    add_predictions(both_model) %>% 
+    mutate(Odds = exp(pred), 
+           Probability = plogis(pred)) %>% 
+    rename(`Predicted Value` = pred)
 ```
 
 ```{r}
 pseudo_r2(both_model)
 ```
 
+
 ```{r}
-temp_data <- predicted_data(both_model, data)
-predictive_percentage(temp_data)
+fake_data <- data_grid(data, Sex, Age_Bin) %>% add_predictions(both_model) %>% mutate(prob=plogis(pred))
+ggplot(fake_data, aes(Age_Bin, prob)) + geom_bar(aes(fill = Sex), stat="identity", position = "dodge") + ylim(0,1) + labs(x="Age Range (Years)", y="Probability of Salary >50K")
 ```
 
 ```{r}
-confusion_matrix(temp_data)
-```
-
-```{r}
-fake_data <- data_grid(data, Sex, Age=seq_range(Age, 25)) %>% add_predictions(both_model) %>% mutate(prob=plogis(pred))
-ggplot(data) + geom_point(aes(Age, Salary, color=Sex), alpha = 0.1) + geom_line(aes(Age, prob, color=Sex), data=fake_data) + labs(x="Age (Years)", y="Probability of Salary >50K") + geom_vline(xintercept = average_age, color="blue", alpha = 0.5, linetype="dotted")
+ggplot(fake_data, aes(x=Age_Bin, y=prob, group=Sex, colour=Sex)) + geom_line() + geom_point(size=3) + ylim(0,1) + labs(y="Probability of Salary >50K", x="Age Range (Years)")
 ```
 
 
@@ -396,4 +441,26 @@ fake_data <- data_grid(data, Hours_Per_Week=seq_range(Hours_Per_Week, 20), Educa
   mutate(Education_Years=round(Education_Years)) %>% add_predictions(multiple_cont_interaction_model) %>% mutate(prob=plogis(pred), Education_Years = factor(Education_Years)) %>% rename(`Education (Years)` = Education_Years)
 ggplot(data %>% rename(`Education (Years)` = Education_Years)) + geom_point(aes(Hours_Per_Week, Salary), alpha = 0.12) + geom_line(aes(Hours_Per_Week, prob, color=`Education (Years)`), data=fake_data) + labs(x="Work Commitment (Hours/Week)", y="Probability of Salary >50K")
 ```
+
+***
+##### 11. Does being full-time affect their salary?
+
+```{r}
+fulltime_model <- glm(Salary ~ Fulltime, data=data, family=binomial(logit))
+odds_and_probs(fulltime_model)
+```
+
+```{r}
+predicted_probabilities(fulltime_model, data, pivot_variable = "Fulltime")
+```
+
+```{r}
+pseudo_r2(fulltime_model)
+```
+
+```{r}
+fake_data <- data_grid(data, Fulltime) %>% add_predictions(fulltime_model) %>% mutate(prob = plogis(pred))
+ggplot(fake_data) + geom_bar(aes(Fulltime, prob, fill=Fulltime), stat="identity", show.legend=FALSE) + ylim(0,1) + labs(x="Fulltime", y="Probability of Salary >50K")
+```
+
 
