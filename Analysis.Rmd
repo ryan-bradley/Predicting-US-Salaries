@@ -463,4 +463,37 @@ fake_data <- data_grid(data, Fulltime) %>% add_predictions(fulltime_model) %>% m
 ggplot(fake_data) + geom_bar(aes(Fulltime, prob, fill=Fulltime), stat="identity", show.legend=FALSE) + ylim(0,1) + labs(x="Fulltime", y="Probability of Salary >50K")
 ```
 
+*** 
+##### 12. Controling for an individuals age, does an individuals hourly stats still influence their salary?
+
+```{r}
+fulltime_age_model <- glm(Salary ~ Fulltime + Age_Bin, data=data, family=binomial(logit))
+odds_and_probs(fulltime_age_model)
+```
+
+```{r}
+data_grid(data, Age_Bin, Fulltime) %>% 
+    add_predictions(fulltime_age_model) %>% 
+    mutate(Odds = exp(pred), 
+           Probability = plogis(pred)) %>% 
+    rename(`Predicted Value` = pred)
+```
+
+```{r}
+pseudo_r2(fulltime_age_model)
+```
+
+
+```{r}
+fake_data <- data_grid(data, Fulltime, Age_Bin) %>% add_predictions(fulltime_age_model) %>% mutate(prob=plogis(pred))
+ggplot(fake_data, aes(Age_Bin, prob)) + geom_bar(aes(fill = Fulltime), stat="identity", position = "dodge") + ylim(0,1) + labs(x="Age Range (Years)", y="Probability of Salary >50K")
+```
+
+```{r}
+ggplot(fake_data, aes(x=Age_Bin, y=prob, group=Fulltime, colour=Fulltime)) + geom_line() + geom_point(size=3) + ylim(0,1) + labs(y="Probability of Salary >50K", x="Age Range (Years)")
+```
+
+
+
+
 
